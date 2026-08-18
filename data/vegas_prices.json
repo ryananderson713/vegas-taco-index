@@ -1,5 +1,5 @@
 {
- "updated": "2026-08-17 22:50 MDT",
+ "updated": "2026-08-18 04:55 UTC",
  "chains": [
   "Taco Bell",
   "Del Taco"
@@ -14,7 +14,7 @@
    "items": 74
   }
  },
- "storeCount": 89,
+ "storeCount": 88,
  "stores": [
   {
    "store": "dt:del-taco-1454",
@@ -519,15 +519,6 @@
    "zip": "89102",
    "lat": 36.14829,
    "lng": -115.16122
-  },
-  {
-   "store": "tb:043460",
-   "chain": "Taco Bell",
-   "address": "3333 Al Davis Way",
-   "city": "Las Vegas",
-   "zip": "89118",
-   "lat": 36.0908,
-   "lng": -115.1835
   },
   {
    "store": "tb:031902",
