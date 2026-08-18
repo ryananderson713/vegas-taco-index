@@ -1,6 +1,7 @@
 # Vegas Taco Index
 
-Finds the cheapest Taco Bell for a given item across the Las Vegas valley.
+Finds the cheapest Taco Bell or Del Taco for a given item or order across the
+Las Vegas valley.
 
 Taco Bell locations are largely franchised, and franchisees set their own prices.
 The same item can cost meaningfully more a few miles away — most sharply at
@@ -74,13 +75,31 @@ Edit `app.template.html`, never `index.html` — the latter is regenerated.
 
 ## How the data works
 
-Two undocumented endpoints behind tacobell.com, also used by their mobile app.
-Neither needs an account, key, or login:
+Each chain gets one adapter function in `scrape.py` returning the same shape,
+so adding a chain is one function. None of these need an account or login.
+
+**Taco Bell** — undocumented endpoints behind tacobell.com, also used by their
+app. No special headers:
 
 ```
 GET /tacobellwebservices/v4/tacobell/stores?latitude={lat}&longitude={lng}
 GET /tacobellwebservices/v4/tacobell/products/menu/{storeNumber}
 ```
+
+**Del Taco** — an Olo ordering backend at order.deltaco.com. Both endpoints
+answer `403 {"error":"Anti forgery validation failed"}` unless the request
+carries `X-Olo-Request: 1`. Prices are in `baseCost`; combos priced through
+option groups have none and are skipped:
+
+```
+POST /api/vendors/search                {latitude, longitude, handoffMode, timeWantedMode}
+GET  /api/vendors/{slug}?handoffMode=CounterPickup&modelVariant=v19
+```
+
+Items and stores carry a `chain`, and item ids are `"{chain}|{name}"`. Prices
+are only ever compared within a chain — rankings, deals and baskets all scope
+to one chain, since a Del Taco price says nothing about whether a Taco Bell is
+expensive, and no location sells both.
 
 The store locator returns roughly 14 results per query, so `scrape.py` sweeps a
 grid of eight seed points across the valley and dedupes by store number — that

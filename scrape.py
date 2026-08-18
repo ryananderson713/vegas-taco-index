@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Fetch per-store Taco Bell menu prices across the Las Vegas valley.
+Fetch per-store menu prices for every chain across the Las Vegas valley.
 
-Uses the public tacobell.com web/mobile backend. No account or API key needed.
-Writes data/vegas_prices.json, which app.html reads.
+Both chains expose price data to unauthenticated requests, but differently:
+
+  Taco Bell  a plain JSON API used by their site and app; no headers needed.
+  Del Taco   an Olo ordering backend that rejects requests without the
+             `X-Olo-Request: 1` header ("Anti forgery validation failed").
+
+Each adapter returns the same shape, so adding a chain means writing one
+function. Writes data/vegas_prices.json, which build.py embeds.
 """
 
 import json
@@ -14,12 +20,10 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 
-BASE = "https://www.tacobell.com/tacobellwebservices/v4/tacobell"
-UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "vegas_prices.json")
+REQUEST_DELAY = 0.4  # be a polite client
 
-# The store locator returns ~14 results per query, so sweep a grid over the
-# valley to reach every location instead of just the ones near downtown.
+# Sweep the valley: each locator returns only a page of nearby results.
 SEED_POINTS = [
     (36.1699, -115.1398),  # downtown
     (36.1147, -115.1728),  # the Strip
@@ -31,119 +35,196 @@ SEED_POINTS = [
     (36.2800, -115.1200),  # North Las Vegas
 ]
 
-REQUEST_DELAY = 0.4  # be a polite client
+UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0 Safari/537.36"
 
 
-def fetch(url, tries=3):
+def fetch(url, headers=None, payload=None, tries=3):
+    hdrs = {"User-Agent": UA, "Accept": "application/json"}
+    hdrs.update(headers or {})
+    body = None
+    if payload is not None:
+        body = json.dumps(payload).encode()
+        hdrs["Content-Type"] = "application/json"
     for attempt in range(tries):
         try:
-            req = urllib.request.Request(url, headers=UA)
+            req = urllib.request.Request(url, headers=hdrs, data=body)
             with urllib.request.urlopen(req, timeout=45) as r:
                 return json.load(r)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
             if attempt == tries - 1:
                 raise
             time.sleep(1.5 * (attempt + 1))
 
 
-def find_stores():
-    """Sweep the seed grid and dedupe by store number."""
+# --------------------------------------------------------------------------
+# Taco Bell
+# --------------------------------------------------------------------------
+
+TB = "https://www.tacobell.com/tacobellwebservices/v4/tacobell"
+
+
+def taco_bell():
     stores = {}
     for lat, lng in SEED_POINTS:
         try:
-            data = fetch(f"{BASE}/stores?latitude={lat}&longitude={lng}")
+            data = fetch(f"{TB}/stores?latitude={lat}&longitude={lng}")
         except Exception as e:
-            print(f"  ! store lookup failed at {lat},{lng}: {e}", file=sys.stderr)
+            print(f"  ! Taco Bell locator failed at {lat},{lng}: {e}", file=sys.stderr)
             continue
         for s in data.get("nearByStores", []):
-            num = s.get("storeNumber")
-            geo = s.get("geoPoint") or {}
-            if not num or num in stores:
+            num, geo = s.get("storeNumber"), s.get("geoPoint") or {}
+            if not num or num in stores or not geo.get("latitude"):
                 continue
-            addr = s.get("address") or {}
+            a = s.get("address") or {}
             stores[num] = {
-                "store": num,
-                "address": addr.get("line1"),
-                "city": addr.get("town"),
-                "zip": addr.get("postalCode"),
-                "phone": s.get("phoneNumber"),
-                "lat": geo.get("latitude"),
-                "lng": geo.get("longitude"),
+                "store": f"tb:{num}", "chain": "Taco Bell",
+                "address": a.get("line1"), "city": a.get("town"), "zip": a.get("postalCode"),
+                "lat": geo.get("latitude"), "lng": geo.get("longitude"),
             }
         time.sleep(REQUEST_DELAY)
-    return stores
+
+    prices = defaultdict(dict)
+    ok = 0
+    for i, (num, meta) in enumerate(sorted(stores.items()), 1):
+        print(f"  [{i}/{len(stores)}] {meta['address']}, {meta['city']}")
+        try:
+            data = fetch(f"{TB}/products/menu/{num}")
+        except Exception as e:
+            print(f"    ! menu failed: {e}", file=sys.stderr)
+            continue
+        for cat in data.get("menuProductCategories", []):
+            for p in cat.get("products", []):
+                price = (p.get("price") or {}).get("value")
+                name = (p.get("name") or "").strip()
+                if price and name:
+                    cur = prices[name].get(meta["store"])
+                    if cur is None or price < cur:
+                        prices[name][meta["store"]] = price
+        ok += 1
+        time.sleep(REQUEST_DELAY)
+    return list(stores.values()), prices, ok
 
 
-def fetch_menu(store_num):
-    """Return {item_name: price} for one store."""
-    data = fetch(f"{BASE}/products/menu/{store_num}")
-    out = {}
-    for cat in data.get("menuProductCategories", []):
-        for p in cat.get("products", []):
-            price = (p.get("price") or {}).get("value")
-            name = (p.get("name") or "").strip()
+# --------------------------------------------------------------------------
+# Del Taco (Olo)
+# --------------------------------------------------------------------------
+
+DT = "https://order.deltaco.com/api"
+OLO = {"X-Olo-Request": "1"}   # without this the API answers 403
+
+
+def del_taco():
+    stores = {}
+    for lat, lng in SEED_POINTS:
+        try:
+            data = fetch(f"{DT}/vendors/search", headers=OLO, payload={
+                "latitude": lat, "longitude": lng,
+                "handoffMode": "CounterPickup", "timeWantedMode": "Immediate",
+            })
+        except Exception as e:
+            print(f"  ! Del Taco locator failed at {lat},{lng}: {e}", file=sys.stderr)
+            continue
+        for v in data.get("vendor-search-results", []):
+            slug = v.get("slug")
+            addr = v.get("address") or {}
+            # the locator reaches into Utah and California; keep the valley
+            if not slug or slug in stores or v.get("state") != "NV":
+                continue
+            if not v.get("latitude"):
+                continue
+            stores[slug] = {
+                "store": f"dt:{slug}", "chain": "Del Taco",
+                "address": (v.get("streetAddress") or "").title(),
+                "city": addr.get("city"), "zip": addr.get("postalCode"),
+                "lat": v.get("latitude"), "lng": v.get("longitude"),
+            }
+        time.sleep(REQUEST_DELAY)
+
+    prices = defaultdict(dict)
+    ok = 0
+    for i, (slug, meta) in enumerate(sorted(stores.items()), 1):
+        print(f"  [{i}/{len(stores)}] {meta['address']}, {meta['city']}")
+        try:
+            data = fetch(f"{DT}/vendors/{slug}?handoffMode=CounterPickup&modelVariant=v19", headers=OLO)
+        except Exception as e:
+            print(f"    ! menu failed: {e}", file=sys.stderr)
+            continue
+        for p in data.get("products", []):
+            # combos price through option groups and carry no baseCost
+            price, name = p.get("baseCost"), (p.get("name") or "").strip()
             if price and name:
-                # Same item can appear in several categories; keep the lowest.
-                if name not in out or price < out[name]:
-                    out[name] = price
-    return out
+                cur = prices[name].get(meta["store"])
+                if cur is None or price < cur:
+                    prices[name][meta["store"]] = price
+        ok += 1
+        time.sleep(REQUEST_DELAY)
+    return list(stores.values()), prices, ok
+
+
+CHAINS = [("Taco Bell", taco_bell), ("Del Taco", del_taco)]
 
 
 def main():
-    print("Finding Las Vegas Taco Bell locations...")
-    stores = find_stores()
-    print(f"  found {len(stores)} stores\n")
+    all_stores, all_items, counts = [], [], {}
 
-    prices = defaultdict(dict)
-    categories = {}
-    ok = 0
-
-    for i, (num, meta) in enumerate(sorted(stores.items()), 1):
-        label = f"{meta['address']}, {meta['city']}"
-        print(f"[{i}/{len(stores)}] {label}")
+    for label, fn in CHAINS:
+        print(f"\n=== {label} ===")
         try:
-            menu = fetch_menu(num)
+            stores, prices, ok = fn()
         except Exception as e:
-            print(f"  ! menu failed: {e}", file=sys.stderr)
+            print(f"  ! {label} failed entirely: {e}", file=sys.stderr)
             continue
-        for name, price in menu.items():
-            prices[name][num] = price
-        ok += 1
-        time.sleep(REQUEST_DELAY)
+        if not ok:
+            print(f"  ! {label}: no menus fetched, skipping", file=sys.stderr)
+            continue
 
-    if ok == 0:
-        print("No menus fetched — aborting so the existing data file is kept.", file=sys.stderr)
+        # Keep items sold at most of the chain's stores so comparisons are
+        # apples-to-apples rather than flagging a regional item as missing.
+        threshold = max(2, ok // 2)
+        kept = 0
+        for name, by_store in prices.items():
+            if len(by_store) < threshold:
+                continue
+            vals = list(by_store.values())
+            all_items.append({
+                "id": f"{label}|{name}", "name": name, "chain": label,
+                "min": min(vals), "max": max(vals), "stores": by_store,
+            })
+            kept += 1
+        # A store whose whole menu is regional (the stadium location, say)
+        # contributes nothing comparable — drop it so counts match the rankings.
+        priced = {st for name, by_store in prices.items() if len(by_store) >= threshold
+                  for st in by_store}
+        stores = [s for s in stores if s["store"] in priced]
+        dropped = ok - len(stores)
+        all_stores.extend(stores)
+        counts[label] = {"stores": len(stores), "items": kept}
+        print(f"  {len(stores)} stores, {kept} comparable items "
+              f"({len(prices) - kept} regional items skipped"
+              f"{f', {dropped} store(s) with no comparable menu' if dropped else ''})")
+
+    if not all_items:
+        print("\nNothing scraped — keeping the existing data file.", file=sys.stderr)
         return 1
 
-    # Keep only items sold at most stores, so comparisons are apples-to-apples.
-    threshold = max(2, ok // 2)
-    items = []
-    for name, by_store in prices.items():
-        if len(by_store) < threshold:
-            continue
-        vals = list(by_store.values())
-        items.append({
-            "name": name,
-            "min": min(vals),
-            "max": max(vals),
-            "stores": by_store,
-        })
-    items.sort(key=lambda x: x["name"].lower())
+    all_items.sort(key=lambda i: (i["chain"], i["name"].lower()))
+    all_stores.sort(key=lambda s: (s["chain"], s["address"] or ""))
 
     payload = {
         "updated": time.strftime("%Y-%m-%d %H:%M %Z"),
-        "storeCount": ok,
-        "stores": [stores[n] for n in sorted(stores)],
-        "items": items,
+        "chains": [c for c, _ in CHAINS if c in counts],
+        "counts": counts,
+        "storeCount": len(all_stores),
+        "stores": all_stores,
+        "items": all_items,
     }
-
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    with open(OUT, "w") as f:
+    with open(OUT, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=1)
 
-    dropped = len(prices) - len(items)
     print(f"\nWrote {OUT}")
-    print(f"  {ok} stores, {len(items)} comparable items ({dropped} regional items skipped)")
+    for c, n in counts.items():
+        print(f"  {c}: {n['stores']} stores, {n['items']} items")
     return 0
 
 

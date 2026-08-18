@@ -188,6 +188,10 @@
     color: var(--magenta); border-color: var(--magenta);
     box-shadow: 0 0 14px rgba(255, 46, 136, .3);
   }
+  .chip.on {
+    color: #0A0512; background: var(--magenta); border-color: var(--magenta);
+    box-shadow: 0 0 16px rgba(255, 46, 136, .45);
+  }
 
   /* ---------- item rows ---------- */
   .list { display: flex; flex-direction: column; gap: 9px; }
@@ -209,6 +213,13 @@
   }
   .item-top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
   .item-name { font-weight: 650; font-size: 15.5px; letter-spacing: -.008em; }
+  .badge {
+    display: inline-block; margin-right: 7px; padding: 2px 7px;
+    border-radius: 5px; font-size: 10px; font-weight: 800;
+    letter-spacing: .08em; text-transform: uppercase; vertical-align: 1.5px;
+  }
+  .badge.tb { color: var(--violet); background: rgba(177, 92, 255, .14); }
+  .badge.dt { color: var(--ember); background: rgba(255, 106, 61, .14); }
   .item-range {
     font-family: var(--mono); font-variant-numeric: tabular-nums;
     font-size: 14px; white-space: nowrap; color: var(--dim);
@@ -430,9 +441,9 @@
 <div class="wrap">
   <header>
     <div class="marquee">
-      <div class="eyebrow">Las Vegas Valley &middot; <span id="storeCount"></span> locations</div>
+      <div class="eyebrow">Las Vegas Valley &middot; <span id="storeCount"></span></div>
       <h1>Vegas <span class="glyph">Taco</span> Index</h1>
-      <p class="sub">Every Taco Bell in the valley, priced. Find who's charging <b>tourist rates</b> and who isn't.</p>
+      <p class="sub">Every Taco Bell and Del Taco in the valley, priced. Find who's charging <b>tourist rates</b> and who isn't.</p>
     </div>
   </header>
 
@@ -445,6 +456,7 @@
       <button id="spreadOnly" aria-pressed="false">Only items that vary</button>
       <span class="geo-note" id="geoNote"></span>
     </div>
+    <div class="chips" id="chainChips"></div>
     <div class="chips">
       <button class="chip" data-q="taco">Tacos</button>
       <button class="chip" data-q="burrito">Burritos</button>
@@ -464,7 +476,7 @@
 
   <footer>
     <div>Prices pulled from Taco Bell's public store menus on <span id="updated"></span>. <b>Unofficial and not affiliated with Taco Bell</b> — verify before you order.</div>
-    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b6</span></div>
+    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b7</span></div>
   </footer>
 </div>
 
@@ -481,9 +493,14 @@ const items = DATA.items;
 const $ = (id) => document.getElementById(id);
 let here = null;          // {lat, lng} once geolocation resolves
 let spreadOnly = false;
+let chainFilter = "";                  // "" = every chain
+const CHAINS = DATA.chains || [...new Set(items.map((i) => i.chain))];
+const chainClass = (c) => (c === "Del Taco" ? "dt" : "tb");
 let openItem = null;
 
-$("storeCount").textContent = DATA.storeCount;
+$("storeCount").textContent = (DATA.chains || []).length > 1
+  ? `${DATA.storeCount} locations \u00b7 ${DATA.chains.length} chains`
+  : `${DATA.storeCount} locations`;
 $("updated").textContent = DATA.updated;
 
 const money = (n) => "$" + n.toFixed(2);
@@ -493,12 +510,12 @@ const directionsTo = (s) =>
   `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
 
 const BASKET_KEY = "vti.basket";
-const byName = new Map(items.map((i) => [i.name, i]));
+const byId = new Map(items.map((i) => [i.id, i]));
 let basket = {};                       // { itemName: qty }
 try {
   const raw = JSON.parse(localStorage.getItem(BASKET_KEY) || "{}");
   for (const [n, q] of Object.entries(raw)) {
-    if (byName.has(n) && Number.isFinite(q) && q > 0) basket[n] = Math.min(50, Math.floor(q));
+    if (byId.has(n) && Number.isFinite(q) && q > 0) basket[n] = Math.min(50, Math.floor(q));
   }
 } catch (e) { basket = {}; }
 
@@ -508,35 +525,36 @@ function saveBasket() {
 
 function basketLines() {
   return Object.entries(basket)
-    .filter(([n, q]) => q > 0 && byName.has(n))
-    .map(([n, q]) => ({ item: byName.get(n), qty: q }))
-    .sort((a, b) => a.item.name.localeCompare(b.item.name));
+    .filter(([n, q]) => q > 0 && byId.has(n))
+    .map(([n, q]) => ({ item: byId.get(n), qty: q }))
+    .sort((a, b) => a.item.chain.localeCompare(b.item.chain) || a.item.name.localeCompare(b.item.name));
 }
 
 const basketCount = () => basketLines().reduce((n, l) => n + l.qty, 0);
 
-function setQty(name, qty) {
+function setQty(id, qty) {
   qty = Math.max(0, Math.min(50, qty));
-  if (qty) basket[name] = qty; else delete basket[name];
+  if (qty) basket[id] = qty; else delete basket[id];
   saveBasket();
   renderBasketBar();
-  const card = document.querySelector(`.item[data-name="${CSS.escape(name)}"]`);
+  const card = document.querySelector(`.item[data-id="${CSS.escape(id)}"]`);
   if (card) {
     card.classList.toggle("in-basket", qty > 0);
-    card.querySelector(".stepper").replaceWith(stepper(name, qty));
+    card.querySelector(".stepper").replaceWith(stepper(id, qty));
   }
   if (!$("basketView").classList.contains("hidden")) showBasket();
 }
 
-function stepper(name, qty) {
+function stepper(id, qty) {
   const wrap = document.createElement("div");
   wrap.className = "stepper";
+  const label_ = byId.get(id) ? byId.get(id).name : id;
   const mk = (label, delta, aria) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = label;
-    b.setAttribute("aria-label", `${aria} ${name}`);
-    b.addEventListener("click", () => setQty(name, (basket[name] || 0) + delta));
+    b.setAttribute("aria-label", `${aria} ${label_}`);
+    b.addEventListener("click", () => setQty(id, (basket[id] || 0) + delta));
     return b;
   };
   if (qty > 0) {
@@ -623,9 +641,31 @@ function miles(a, b) {
 function matches(query) {
   const q = query.trim().toLowerCase();
   let out = items;
+  if (chainFilter) out = out.filter((i) => i.chain === chainFilter);
   if (q) out = out.filter((i) => i.name.toLowerCase().includes(q));
   if (spreadOnly) out = out.filter((i) => i.max > i.min);
   return out;
+}
+
+function renderChainChips() {
+  const wrap = $("chainChips");
+  wrap.innerHTML = "";
+  const mk = (label, value) => {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.type = "button";
+    b.textContent = label;
+    b.setAttribute("aria-pressed", String(chainFilter === value));
+    if (chainFilter === value) b.classList.add("on");
+    b.addEventListener("click", () => {
+      chainFilter = chainFilter === value ? "" : value;
+      renderChainChips();
+      closeDetail();
+      renderList();
+    });
+    return b;
+  };
+  for (const c of CHAINS) wrap.appendChild(mk(c, c));
 }
 
 function renderList() {
@@ -644,8 +684,8 @@ function renderList() {
   for (const item of sorted) {
     const card = document.createElement("div");
     card.className = "item";
-    card.dataset.name = item.name;
-    if (basket[item.name]) card.classList.add("in-basket");
+    card.dataset.id = item.id;
+    if (basket[item.id]) card.classList.add("in-basket");
 
     const varies = item.max > item.min;
     const prices = Object.values(item.stores);
@@ -677,15 +717,15 @@ function renderList() {
     main.type = "button";
     main.innerHTML = `
       <div class="item-top">
-        <span class="item-name"></span>
+        <span class="item-name"><span class="badge ${chainClass(item.chain)}">${item.chain}</span><span class="nm"></span></span>
         <span class="item-range">${range}</span>
       </div>
       ${strip}`;
-    main.querySelector(".item-name").textContent = item.name;
+    main.querySelector(".nm").textContent = item.name;
     main.addEventListener("click", () => showDetail(item));
 
     card.appendChild(main);
-    card.appendChild(stepper(item.name, basket[item.name] || 0));
+    card.appendChild(stepper(item.id, basket[item.id] || 0));
     list.appendChild(card);
   }
 }
@@ -752,7 +792,7 @@ function showDetail(item) {
   view.innerHTML = `
     <button class="back" type="button" id="back">&larr; All items</button>
     <div>
-      <div class="eyebrow">${rows.length} locations</div>
+      <div class="eyebrow">${item.chain} \u00b7 ${rows.length} locations</div>
       <h2 id="detailName"></h2>
     </div>
     ${verdict}
@@ -783,13 +823,30 @@ function showBasket() {
   const view = $("basketView");
   if (!lines.length) { closeBasket(); return; }
 
+  const chains = [...new Set(lines.map((l) => l.item.chain))];
+  if (chains.length > 1) {
+    view.innerHTML = `
+      <button class="back" type="button" id="basketBack">&larr; All items</button>
+      <div><div class="eyebrow">Your order</div><h2>One chain at a time</h2></div>
+      <div class="note">This order mixes <b>${chains.join(" and ")}</b>. No single location
+        sells both, so there's nothing to compare. Remove one chain's items and try again.</div>
+      <button class="back" type="button" id="basketClear">Clear the basket</button>`;
+    $("basketBack").addEventListener("click", closeBasket);
+    $("basketClear").addEventListener("click", () => {
+      basket = {}; saveBasket(); renderBasketBar(); closeBasket(); renderList();
+    });
+    openView(view);
+    return;
+  }
+
   // A basket total is only comparable at stores carrying every item in it.
   let eligible = null;
   for (const { item } of lines) {
     const here_ = new Set(Object.keys(item.stores));
     eligible = eligible === null ? here_ : new Set([...eligible].filter((s) => here_.has(s)));
   }
-  const missing = stores.length - eligible.size;
+  const chainStores = stores.filter((s) => s.chain === chains[0]);
+  const missing = chainStores.length - eligible.size;
 
   const rows = [...eligible].map((num) => {
     const s = stores.find((x) => x.store === num);
@@ -858,7 +915,7 @@ function showBasket() {
       <h2>Cheapest place to buy this</h2>
     </div>
     <div class="basket-lines">${lineHtml}</div>
-    ${missing ? `<div class="note"><b>${missing}</b> of ${stores.length} locations don't carry
+    ${missing ? `<div class="note"><b>${missing}</b> of ${chainStores.length} ${chains[0]} locations don't carry
        everything in this order, so they're left out of the ranking.</div>` : ""}
     ${verdict}
     ${rows.length ? `<div class="table-wrap"><table>
@@ -907,11 +964,16 @@ function showDeals() {
   }
 
   // Everything is measured against the store nearest the chosen starting point.
-  const mine = stores.map((s) => ({ s, d: miles(here, s) })).sort((a, b) => a.d - b.d)[0];
+  // Rank against the same chain only: a Del Taco price says nothing about
+  // whether a Taco Bell is expensive.
+  const pool = chainFilter ? stores.filter((s) => s.chain === chainFilter) : stores;
+  const mine = pool.map((s) => ({ s, d: miles(here, s) })).sort((a, b) => a.d - b.d)[0];
   const id = mine.s.store;
+  const chain = mine.s.chain;
+  const sameChain = stores.filter((s) => s.chain === chain);
 
   const wins = [], loses = [];
-  for (const item of items) {
+  for (const item of items.filter((i) => i.chain === chain)) {
     const p = item.stores[id];
     if (p === undefined) continue;
     const gap = +(p - item.min).toFixed(2);
@@ -932,8 +994,9 @@ function showDeals() {
   wins.sort((a, b) => b.save - a.save);
 
   // Where this store sits overall, on the items every location carries.
-  const shared = items.filter((i) => Object.keys(i.stores).length === stores.length);
-  const totals = stores.map((st) => ({
+  const shared = items.filter((i) => i.chain === chain
+    && Object.keys(i.stores).length === sameChain.length);
+  const totals = sameChain.map((st) => ({
     st, total: shared.reduce((sum, i) => sum + i.stores[st.store], 0),
   })).sort((a, b) => a.total - b.total);
   // Lots of locations tie exactly, so rank by how many are strictly cheaper —
@@ -960,13 +1023,13 @@ function showDeals() {
   view.innerHTML = `
     <button class="back" type="button" id="dealsBack">&larr; All items</button>
     <div>
-      <div class="eyebrow">${mine.s.address} \u00b7 ${mine.d.toFixed(1)} mi</div>
+      <div class="eyebrow">${chain} \u00b7 ${mine.s.address} \u00b7 ${mine.d.toFixed(1)} mi</div>
       <h2>What's a deal here</h2>
     </div>
     <div class="rankline">${ours <= cheapest + 0.005
-        ? `This location is <b>as cheap as it gets</b> in the valley on the ${shared.length} items
+        ? `This location is <b>as cheap as it gets</b> of ${sameChain.length} ${chain}s on the ${shared.length} items
            everyone carries${tied ? `, tied with <b>${tied}</b> other${tied === 1 ? "" : "s"}` : ""}.`
-        : `This location ranks <b>#${place}</b> of <b>${stores.length}</b> in the valley on the
+        : `This location ranks <b>#${place}</b> of <b>${sameChain.length}</b> ${chain}s in the valley on the
            ${shared.length} items everyone carries \u2014 about <b>${money(ours - cheapest)}</b> more
            than the cheapest${tied ? `, tied with <b>${tied}</b> other${tied === 1 ? "" : "s"}` : ""}.`}</div>
     ${loses.length ? `<div class="deal-group">
@@ -1100,6 +1163,7 @@ $("geo").addEventListener("click", (e) => {
 $("basketGo").addEventListener("click", showBasket);
 $("dealsGo").addEventListener("click", showDeals);
 
+renderChainChips();
 renderBasketBar();
 renderList();
 </script>

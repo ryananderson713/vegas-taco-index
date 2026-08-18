@@ -44,9 +44,18 @@ def main():
     with open(DATA, encoding="utf-8") as f:
         data = json.load(f)
 
-    # Drop stores that returned no prices so the app never renders a dead row.
+    # Drop stores that returned no prices so the app never renders a dead row,
+    # then restate the counts from what actually ships.
     priced = {s for i in data["items"] for s in i["stores"]}
     data["stores"] = [s for s in data["stores"] if s["store"] in priced]
+    data["storeCount"] = len(data["stores"])
+    per_chain = {}
+    for s_ in data["stores"]:
+        per_chain.setdefault(s_["chain"], {"stores": 0, "items": 0})["stores"] += 1
+    for i in data["items"]:
+        per_chain.setdefault(i["chain"], {"stores": 0, "items": 0})["items"] += 1
+    data["counts"] = per_chain
+    data["chains"] = [c for c in data.get("chains", per_chain) if c in per_chain]
 
     with open(TPL, encoding="utf-8") as f:
         tpl = f.read()
