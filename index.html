@@ -51,7 +51,7 @@
   .wrap {
     max-width: 660px;
     margin: 0 auto;
-    padding: 30px 18px 72px;
+    padding: 30px 18px 96px;
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -247,6 +247,64 @@
   }
   .flat { font-size: 12.5px; color: var(--dim); }
 
+  /* ---------- basket controls ---------- */
+  .item { flex-direction: row; align-items: center; gap: 12px; padding: 0; }
+  .item-main {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 14px 0 14px 15px;
+    background: none; border: none; border-radius: 0;
+    text-align: left; color: inherit; font: inherit; cursor: pointer;
+  }
+  .item-main:hover { color: inherit; box-shadow: none; border: none; }
+  .item-main:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+
+  .stepper { display: flex; align-items: center; gap: 2px; padding-right: 11px; flex-shrink: 0; }
+  .stepper button {
+    width: 32px; height: 32px; padding: 0;
+    display: grid; place-items: center;
+    font-size: 17px; font-weight: 700; line-height: 1;
+    border-radius: 8px;
+  }
+  .qty {
+    min-width: 22px; text-align: center;
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-weight: 700; font-size: 14.5px; color: var(--cyan);
+    text-shadow: 0 0 10px rgba(43, 231, 224, .5);
+  }
+  .item.in-basket { border-color: var(--cyan); box-shadow: 0 0 16px rgba(43, 231, 224, .16); }
+
+  /* ---------- sticky basket bar ---------- */
+  .basket-bar {
+    position: fixed; inset-inline: 0; bottom: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 11px 16px calc(11px + env(safe-area-inset-bottom, 0px));
+    background: rgba(23, 12, 39, .96);
+    border-top: 1px solid var(--cyan);
+    box-shadow: 0 -6px 26px rgba(43, 231, 224, .16);
+    backdrop-filter: blur(8px);
+  }
+  .basket-bar .count { font-size: 13.5px; font-weight: 650; color: var(--ink); }
+  .basket-bar .count span { color: var(--cyan); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .basket-bar .go {
+    background: var(--cyan); border-color: var(--cyan); color: #0A0512;
+    box-shadow: 0 0 18px rgba(43, 231, 224, .5);
+  }
+
+  /* ---------- basket view ---------- */
+  .basket-lines { display: flex; flex-direction: column; gap: 1px; background: var(--line);
+                  border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .basket-line { display: flex; align-items: center; gap: 10px; padding: 11px 13px; background: var(--surface); }
+  .basket-line .nm { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; }
+  .basket-line .ea { font-family: var(--mono); font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+  .note {
+    font-size: 13px; color: var(--muted);
+    background: var(--surface-2); border: 1px solid var(--line-bright);
+    border-radius: 10px; padding: 11px 13px;
+  }
+  .note b { color: var(--ember); }
+
+
   /* ---------- detail ---------- */
   .detail { display: flex; flex-direction: column; gap: 17px; }
   .back { align-self: flex-start; }
@@ -373,11 +431,17 @@
   </div>
 
   <div id="detailView" class="detail hidden"></div>
+  <div id="basketView" class="detail hidden"></div>
 
   <footer>
     <div>Prices pulled from Taco Bell's public store menus on <span id="updated"></span>. <b>Unofficial and not affiliated with Taco Bell</b> — verify before you order.</div>
-    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b4</span></div>
+    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b5</span></div>
   </footer>
+</div>
+
+<div id="basketBar" class="basket-bar hidden">
+  <span class="count" id="basketCount"></span>
+  <button class="go" type="button" id="basketGo">Compare basket</button>
 </div>
 
 <script>
@@ -394,6 +458,74 @@ $("storeCount").textContent = DATA.storeCount;
 $("updated").textContent = DATA.updated;
 
 const money = (n) => "$" + n.toFixed(2);
+
+const BASKET_KEY = "vti.basket";
+const byName = new Map(items.map((i) => [i.name, i]));
+let basket = {};                       // { itemName: qty }
+try {
+  const raw = JSON.parse(localStorage.getItem(BASKET_KEY) || "{}");
+  for (const [n, q] of Object.entries(raw)) {
+    if (byName.has(n) && Number.isFinite(q) && q > 0) basket[n] = Math.min(50, Math.floor(q));
+  }
+} catch (e) { basket = {}; }
+
+function saveBasket() {
+  try { localStorage.setItem(BASKET_KEY, JSON.stringify(basket)); } catch (e) {}
+}
+
+function basketLines() {
+  return Object.entries(basket)
+    .filter(([n, q]) => q > 0 && byName.has(n))
+    .map(([n, q]) => ({ item: byName.get(n), qty: q }))
+    .sort((a, b) => a.item.name.localeCompare(b.item.name));
+}
+
+const basketCount = () => basketLines().reduce((n, l) => n + l.qty, 0);
+
+function setQty(name, qty) {
+  qty = Math.max(0, Math.min(50, qty));
+  if (qty) basket[name] = qty; else delete basket[name];
+  saveBasket();
+  renderBasketBar();
+  const card = document.querySelector(`.item[data-name="${CSS.escape(name)}"]`);
+  if (card) {
+    card.classList.toggle("in-basket", qty > 0);
+    card.querySelector(".stepper").replaceWith(stepper(name, qty));
+  }
+  if (!$("basketView").classList.contains("hidden")) showBasket();
+}
+
+function stepper(name, qty) {
+  const wrap = document.createElement("div");
+  wrap.className = "stepper";
+  const mk = (label, delta, aria) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.setAttribute("aria-label", `${aria} ${name}`);
+    b.addEventListener("click", () => setQty(name, (basket[name] || 0) + delta));
+    return b;
+  };
+  if (qty > 0) {
+    wrap.appendChild(mk("\u2212", -1, "Remove one"));
+    const n = document.createElement("span");
+    n.className = "qty";
+    n.textContent = String(qty);
+    wrap.appendChild(n);
+  }
+  wrap.appendChild(mk("+", 1, "Add one"));
+  return wrap;
+}
+
+function renderBasketBar() {
+  const n = basketCount(), bar = $("basketBar");
+  bar.classList.toggle("hidden", n === 0);
+  if (n) {
+    const lines = basketLines().length;
+    $("basketCount").innerHTML =
+      `<span>${n}</span> item${n === 1 ? "" : "s"} \u00b7 <span>${lines}</span> kind${lines === 1 ? "" : "s"}`;
+  }
+}
 
 // Published artifacts run in a sandboxed iframe with no geolocation permission,
 // so the browser denies getCurrentPosition outright. These let anyone set a
@@ -435,7 +567,9 @@ function setHere(coords, note) {
   here = coords;
   $("geoNote").textContent = note;
   areaSel.classList.toggle("set", !!coords && areaSel.value !== "");
-  if (openItem) showDetail(openItem);
+  // Re-render whichever view is open so distances appear without a round trip.
+  if (!$("basketView").classList.contains("hidden")) showBasket();
+  else if (openItem) showDetail(openItem);
 }
 
 function nearestTo(pt) {
@@ -474,9 +608,10 @@ function renderList() {
   const sorted = results.slice().sort((a, b) => (b.max - b.min) - (a.max - a.min) || a.name.localeCompare(b.name));
 
   for (const item of sorted) {
-    const btn = document.createElement("button");
-    btn.className = "item";
-    btn.type = "button";
+    const card = document.createElement("div");
+    card.className = "item";
+    card.dataset.name = item.name;
+    if (basket[item.name]) card.classList.add("in-basket");
 
     const varies = item.max > item.min;
     const prices = Object.values(item.stores);
@@ -503,15 +638,21 @@ function renderList() {
       ? `<b>${money(item.min)}</b> &ndash; ${money(item.max)}`
       : `${money(item.min)}`;
 
-    btn.innerHTML = `
+    const main = document.createElement("button");
+    main.className = "item-main";
+    main.type = "button";
+    main.innerHTML = `
       <div class="item-top">
         <span class="item-name"></span>
         <span class="item-range">${range}</span>
       </div>
       ${strip}`;
-    btn.querySelector(".item-name").textContent = item.name;
-    btn.addEventListener("click", () => showDetail(item));
-    list.appendChild(btn);
+    main.querySelector(".item-name").textContent = item.name;
+    main.addEventListener("click", () => showDetail(item));
+
+    card.appendChild(main);
+    card.appendChild(stepper(item.name, basket[item.name] || 0));
+    list.appendChild(card);
   }
 }
 
@@ -598,9 +739,127 @@ function showDetail(item) {
   });
 
   $("back").addEventListener("click", closeDetail);
+  $("basketView").classList.add("hidden");
   $("listView").classList.add("hidden");
   view.classList.remove("hidden");
   window.scrollTo(0, 0);
+}
+
+function showBasket() {
+  const lines = basketLines();
+  const view = $("basketView");
+  if (!lines.length) { closeBasket(); return; }
+
+  // A basket total is only comparable at stores carrying every item in it.
+  let eligible = null;
+  for (const { item } of lines) {
+    const here_ = new Set(Object.keys(item.stores));
+    eligible = eligible === null ? here_ : new Set([...eligible].filter((s) => here_.has(s)));
+  }
+  const missing = stores.length - eligible.size;
+
+  const rows = [...eligible].map((num) => {
+    const s = stores.find((x) => x.store === num);
+    const total = lines.reduce((sum, l) => sum + l.item.stores[num] * l.qty, 0);
+    return { s, total, dist: here && s ? miles(here, s) : null };
+  }).filter((r) => r.s);
+
+  rows.sort((a, b) => a.total - b.total || (a.dist ?? 0) - (b.dist ?? 0));
+
+  const lineHtml = lines.map((l) => {
+    const ea = l.item.min === l.item.max
+      ? `${money(l.item.min)} ea`
+      : `${money(l.item.min)}\u2013${money(l.item.max)} ea`;
+    return `<div class="basket-line">
+        <span class="qty">${l.qty}</span>
+        <span class="nm"></span>
+        <span class="ea">${ea}</span>
+      </div>`;
+  }).join("");
+
+  let verdict = "";
+  if (rows.length) {
+    const best = rows[0], worst = rows[rows.length - 1];
+    if (here) {
+      const near = rows.slice().sort((a, b) => a.dist - b.dist)[0];
+      const save = near.total - best.total;
+      verdict = save > 0.005
+        ? `<div class="verdict">
+            <span class="verdict-lead">Save ${money(save)}</span>
+            <span class="verdict-body">Your closest store (${near.s.address}, ${near.dist.toFixed(1)} mi)
+            charges ${money(near.total)} for this order. Drive ${best.dist.toFixed(1)} mi to
+            <b>${best.s.address}</b> and pay ${money(best.total)}.</span>
+          </div>`
+        : `<div class="verdict">
+            <span class="verdict-lead">You're already at the best price</span>
+            <span class="verdict-body">Your closest store (${near.s.address}, ${near.dist.toFixed(1)} mi)
+            charges ${money(near.total)} \u2014 nothing nearby beats it.</span>
+          </div>`;
+    } else {
+      const gap = worst.total - best.total;
+      verdict = `<div class="verdict">
+          <span class="verdict-lead">${gap > 0.005 ? "Save " + money(gap) : "Same everywhere"}</span>
+          <span class="verdict-body">Cheapest is <b>${best.s.address}</b> at ${money(best.total)};
+          the priciest charges ${money(worst.total)}.
+          Set your area above to sort by drive distance.</span>
+        </div>`;
+    }
+  }
+
+  const showDist = !!here;
+  const body = rows.map((r, i) => {
+    const cls = i === 0 ? "best" : i === rows.length - 1 && rows.length > 1 ? "worst" : "";
+    const dist = showDist ? `<td class="num"><span class="dist">${r.dist.toFixed(1)} mi</span></td>` : "";
+    return `<tr class="${cls}">
+        <td class="rank">${i + 1}</td>
+        <td class="price">${money(r.total)}</td>
+        <td><span class="addr"></span><br><span class="city"></span></td>
+        ${dist}
+      </tr>`;
+  }).join("");
+
+  view.innerHTML = `
+    <button class="back" type="button" id="basketBack">&larr; All items</button>
+    <div>
+      <div class="eyebrow">Your order</div>
+      <h2>Cheapest place to buy this</h2>
+    </div>
+    <div class="basket-lines">${lineHtml}</div>
+    ${missing ? `<div class="note"><b>${missing}</b> of ${stores.length} locations don't carry
+       everything in this order, so they're left out of the ranking.</div>` : ""}
+    ${verdict}
+    ${rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th class="rank-col">#</th><th>Total</th><th>Location</th>${showDist ? '<th class="num">Distance</th>' : ""}</tr></thead>
+      <tbody>${body}</tbody></table></div>`
+      : `<div class="note">No single location carries every item in this order. Remove one and try again.</div>`}
+    <button class="back" type="button" id="basketClear">Clear the basket</button>`;
+
+  view.querySelectorAll(".basket-line").forEach((el, i) => {
+    el.querySelector(".nm").textContent = lines[i].item.name;
+  });
+  view.querySelectorAll("tbody tr").forEach((tr, i) => {
+    tr.querySelector(".addr").textContent = rows[i].s.address;
+    tr.querySelector(".city").textContent = rows[i].s.city;
+  });
+
+  $("basketBack").addEventListener("click", closeBasket);
+  $("basketClear").addEventListener("click", () => {
+    basket = {};
+    saveBasket();
+    renderBasketBar();
+    closeBasket();
+    renderList();
+  });
+
+  $("listView").classList.add("hidden");
+  $("detailView").classList.add("hidden");
+  view.classList.remove("hidden");
+  window.scrollTo(0, 0);
+}
+
+function closeBasket() {
+  $("basketView").classList.add("hidden");
+  $("listView").classList.remove("hidden");
 }
 
 function closeDetail() {
@@ -695,6 +954,9 @@ $("geo").addEventListener("click", (e) => {
   );
 });
 
+$("basketGo").addEventListener("click", showBasket);
+
+renderBasketBar();
 renderList();
 </script>
 

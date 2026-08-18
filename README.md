@@ -13,6 +13,16 @@ Open `index.html` in any browser. Search an item, tap it, see every location
 ranked cheapest first. Tap **Use my location** to add distances and get a
 "drive X miles, save $Y" verdict.
 
+**Basket mode.** Use the +/- steppers to build an actual order, then tap
+**Compare basket** to rank every location by what that whole order costs. This
+is usually where the money is: a single taco varies by 50c, but a five-item
+order swings over $3 across the valley.
+
+A basket total only means something at a location that stocks every item in it,
+so stores missing anything are excluded from the ranking and the view says how
+many were dropped. The basket persists in `localStorage`, as does your
+starting point.
+
 **Published artifacts cannot use geolocation.** The artifact renders in an
 iframe with no `allow="geolocation"`, so the browser denies the request no
 matter what the viewer permits on their device. Use the **Set your area**
