@@ -21,31 +21,41 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
       - name: Scrape current prices
         run: python3 scrape.py
 
+      - name: Did prices actually move?
+        id: check
+        run: |
+          # Exits 0 when store/item prices differ, 1 when only the timestamp did.
+          if python3 price_changed.py > change.txt 2>&1; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat change.txt
+
       - name: Rebuild pages
+        if: steps.check.outputs.changed == 'true'
         run: python3 build.py
 
-      - name: Commit if anything changed
+      - name: Commit and push
+        if: steps.check.outputs.changed == 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # data/vegas_prices.json always restamps `updated`, so diff the prices
-          # themselves — otherwise every run makes a no-op commit.
-          if git diff --quiet -- index.html vegas-taco-index.html; then
-            echo "No price changes; leaving the repo alone."
-            exit 0
-          fi
-
+          rm -f change.txt
           git add -A
           git commit -m "Refresh prices ($(date -u +%Y-%m-%d))"
           git push
-          echo "Pushed updated prices."
+          echo "Pushed updated prices; Pages will redeploy."
+
+      - name: Nothing to do
+        if: steps.check.outputs.changed != 'true'
+        run: echo "Prices unchanged — repo left untouched."

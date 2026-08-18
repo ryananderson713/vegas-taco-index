@@ -43,6 +43,7 @@ with no new information.
 | File | Purpose |
 |---|---|
 | `scrape.py` | Fetches stores and per-store menus, writes `data/vegas_prices.json` |
+| `price_changed.py` | Exits 0 only if real prices moved; ignores the timestamp |
 | `build.py` | Injects the data into the template, writes `app.html` + `artifact.html` |
 | `app.template.html` | The app — markup, styles, and logic, with a `__DATA__` placeholder |
 | `index.html` | Standalone page. Open this one; also the GitHub Pages entry point. |
@@ -101,6 +102,11 @@ the app also offers a manual starting point.
 `.github/workflows/refresh-prices.yml` re-scrapes every Monday at 13:00 UTC,
 rebuilds both pages, and pushes only if prices actually moved. Pages redeploys
 on its own. Nothing to run by hand.
+
+Whether prices "actually moved" is decided by `price_changed.py`, not by
+`git diff`. Every scrape restamps `updated`, and that timestamp is baked into
+the built HTML, so a plain diff always looks changed — the script compares only
+the store and item data, and names the items that were repriced.
 
 Trigger one immediately from the Actions tab, or:
 
