@@ -1,7 +1,7 @@
 # Vegas Taco Index
 
-Finds the cheapest Taco Bell or Del Taco for a given item or order across the
-Las Vegas valley.
+Finds the cheapest Taco Bell, Del Taco or El Pollo Loco for a given item or
+order across the Las Vegas valley.
 
 Taco Bell locations are largely franchised, and franchisees set their own prices.
 The same item can cost meaningfully more a few miles away — most sharply at
@@ -94,6 +94,16 @@ option groups have none and are skipped:
 ```
 POST /api/vendors/search                {latitude, longitude, handoffMode, timeWantedMode}
 GET  /api/vendors/{slug}?handoffMode=CounterPickup&modelVariant=v19
+```
+
+**El Pollo Loco** — Olo's older "nomnom" generation. Same vendor, different
+routes again, and no header needed. Most of the menu is configurable items
+priced through option groups, which read as `cost: 0` and are skipped, so the
+comparable catalog is small (~27 items):
+
+```
+GET /api/stores/near?lat={lat}&long={lng}&radius=25&limit=50
+GET /api/olo/restaurants/{id}/menu?nomnom=add-restaurant-to-menu&deliverymode=pickup
 ```
 
 Items and stores carry a `chain`, and item ids are `"{chain}|{name}"`. Prices

@@ -220,6 +220,7 @@
   }
   .badge.tb { color: var(--violet); background: rgba(177, 92, 255, .14); }
   .badge.dt { color: var(--ember); background: rgba(255, 106, 61, .14); }
+  .badge.epl { color: var(--lime); background: rgba(67, 255, 154, .13); }
   .item-range {
     font-family: var(--mono); font-variant-numeric: tabular-nums;
     font-size: 14px; white-space: nowrap; color: var(--dim);
@@ -443,7 +444,7 @@
     <div class="marquee">
       <div class="eyebrow">Las Vegas Valley &middot; <span id="storeCount"></span></div>
       <h1>Vegas <span class="glyph">Taco</span> Index</h1>
-      <p class="sub">Every Taco Bell and Del Taco in the valley, priced. Find who's charging <b>tourist rates</b> and who isn't.</p>
+      <p class="sub">Every Taco Bell, Del Taco and El Pollo Loco in the valley, priced. Find who's charging <b>tourist rates</b> and who isn't.</p>
     </div>
   </header>
 
@@ -476,7 +477,7 @@
 
   <footer>
     <div>Prices pulled from Taco Bell's public store menus on <span id="updated"></span>. <b>Unofficial and not affiliated with Taco Bell</b> — verify before you order.</div>
-    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b7</span></div>
+    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b8</span></div>
   </footer>
 </div>
 
@@ -495,7 +496,8 @@ let here = null;          // {lat, lng} once geolocation resolves
 let spreadOnly = false;
 let chainFilter = "";                  // "" = every chain
 const CHAINS = DATA.chains || [...new Set(items.map((i) => i.chain))];
-const chainClass = (c) => (c === "Del Taco" ? "dt" : "tb");
+const chainClass = (c) =>
+  c === "Del Taco" ? "dt" : c === "El Pollo Loco" ? "epl" : "tb";
 let openItem = null;
 
 $("storeCount").textContent = (DATA.chains || []).length > 1

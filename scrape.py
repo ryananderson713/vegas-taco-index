@@ -7,6 +7,9 @@ Both chains expose price data to unauthenticated requests, but differently:
   Taco Bell  a plain JSON API used by their site and app; no headers needed.
   Del Taco   an Olo ordering backend that rejects requests without the
              `X-Olo-Request: 1` header ("Anti forgery validation failed").
+  El Pollo   Olo's older "nomnom" generation, on different routes again
+  Loco       (/api/stores/near and /api/olo/restaurants/{id}/menu), but with
+             no header requirement.
 
 Each adapter returns the same shape, so adding a chain means writing one
 function. Writes data/vegas_prices.json, which build.py embeds.
@@ -161,7 +164,56 @@ def del_taco():
     return list(stores.values()), prices, ok
 
 
-CHAINS = [("Taco Bell", taco_bell), ("Del Taco", del_taco)]
+# --------------------------------------------------------------------------
+# El Pollo Loco (Olo "nomnom")
+# --------------------------------------------------------------------------
+
+EPL = "https://order.elpolloloco.com/api"
+
+
+def el_pollo_loco():
+    stores = {}
+    for lat, lng in SEED_POINTS:
+        try:
+            data = fetch(f"{EPL}/stores/near?lat={lat}&long={lng}&radius=25&limit=50")
+        except Exception as e:
+            print(f"  ! El Pollo Loco locator failed at {lat},{lng}: {e}", file=sys.stderr)
+            continue
+        for r in data.get("restaurants", []):
+            rid = str(r.get("id") or "")
+            if not rid or rid in stores or r.get("state") != "NV" or not r.get("latitude"):
+                continue
+            stores[rid] = {
+                "store": f"epl:{rid}", "chain": "El Pollo Loco",
+                "address": r.get("streetaddress"), "city": r.get("city"), "zip": r.get("zip"),
+                "lat": r.get("latitude"), "lng": r.get("longitude"),
+            }
+        time.sleep(REQUEST_DELAY)
+
+    prices = defaultdict(dict)
+    ok = 0
+    for i, (rid, meta) in enumerate(sorted(stores.items()), 1):
+        print(f"  [{i}/{len(stores)}] {meta['address']}, {meta['city']}")
+        try:
+            data = fetch(f"{EPL}/olo/restaurants/{rid}/menu"
+                         "?nomnom=add-restaurant-to-menu&deliverymode=pickup")
+        except Exception as e:
+            print(f"    ! menu failed: {e}", file=sys.stderr)
+            continue
+        for cat in data.get("categories", []):
+            for p in (cat.get("products") or []):
+                # bowls and combos price through option groups and read as 0
+                price, name = p.get("cost"), (p.get("name") or "").strip()
+                if price and name:
+                    cur = prices[name].get(meta["store"])
+                    if cur is None or price < cur:
+                        prices[name][meta["store"]] = price
+        ok += 1
+        time.sleep(REQUEST_DELAY)
+    return list(stores.values()), prices, ok
+
+
+CHAINS = [("Taco Bell", taco_bell), ("Del Taco", del_taco), ("El Pollo Loco", el_pollo_loco)]
 
 
 def main():
