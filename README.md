@@ -18,6 +18,14 @@ ranked cheapest first. Tap **Use my location** to add distances and get a
 is usually where the money is: a single taco varies by 50c, but a five-item
 order swings over $3 across the valley.
 
+**Deals near you.** Once a starting point is set, this names what your nearest
+location is cheap on, what it overcharges for (with the nearest cheaper store
+and how far it is), and where it sits in the valley ranking. Many locations
+price identically, so the ranking counts only stores that are strictly cheaper
+and reports ties rather than implying a false ordering.
+
+Every address in a results table is a directions link.
+
 A basket total only means something at a location that stocks every item in it,
 so stores missing anything are excluded from the ranking and the view says how
 many were dropped. The basket persists in `localStorage`, as does your
@@ -54,6 +62,8 @@ with no new information.
 |---|---|
 | `scrape.py` | Fetches stores and per-store menus, writes `data/vegas_prices.json` |
 | `price_changed.py` | Exits 0 only if real prices moved; ignores the timestamp |
+| `make_icons.py` | Draws the home-screen icons; hand-rolled PNG encoder, no image library needed |
+| `manifest.webmanifest` | Makes "Add to Home Screen" install it as a standalone app |
 | `build.py` | Injects the data into the template, writes `app.html` + `artifact.html` |
 | `app.template.html` | The app — markup, styles, and logic, with a `__DATA__` placeholder |
 | `index.html` | Standalone page. Open this one; also the GitHub Pages entry point. |

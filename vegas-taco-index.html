@@ -290,6 +290,34 @@
   .basket-line { display: flex; align-items: center; gap: 10px; padding: 11px 13px; background: var(--surface); }
   .basket-line .nm { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; }
   .basket-line .ea { font-family: var(--mono); font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+  .deal-group { display: flex; flex-direction: column; gap: 8px; }
+  .deal-head {
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    font-weight: 700; color: var(--muted);
+  }
+  .deal-head.win { color: var(--lime); text-shadow: 0 0 10px rgba(67,255,154,.45); }
+  .deal-head.lose { color: var(--ember); text-shadow: 0 0 10px rgba(255,106,61,.4); }
+  .deal {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 11px 13px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  .deal .nm { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; }
+  .deal .amt {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-weight: 700; font-size: 14px; white-space: nowrap;
+  }
+  .deal.win .amt { color: var(--lime); }
+  .deal.lose .amt { color: var(--ember); }
+  .deal .where { display: block; font-size: 12px; color: var(--dim); font-weight: 400; }
+  .rankline {
+    font-size: 15px; color: var(--ink);
+    padding: 14px 15px; border-radius: 12px;
+    background: linear-gradient(180deg, rgba(177,92,255,.12), rgba(23,12,39,.5));
+    border: 1px solid var(--line-bright);
+  }
+  .rankline b { color: var(--cyan); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
   .note {
     font-size: 13px; color: var(--muted);
     background: var(--surface-2); border: 1px solid var(--line-bright);
@@ -357,7 +385,13 @@
   tr.best { background: rgba(67, 255, 154, .07); }
   tr.best .price { color: var(--lime); text-shadow: 0 0 10px rgba(67, 255, 154, .55); }
   tr.worst .price { color: var(--ember); text-shadow: 0 0 10px rgba(255, 106, 61, .45); }
-  .addr { font-weight: 600; }
+  a.addr {
+    font-weight: 600; color: var(--ink); text-decoration: none;
+    border-bottom: 1px dotted var(--line-bright);
+  }
+  a.addr:hover { color: var(--cyan); border-bottom-color: var(--cyan); }
+  a.addr:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  a.addr::after { content: " \2197"; color: var(--dim); font-size: .85em; }
   .city { color: var(--dim); font-size: 12.5px; }
   .dist { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; font-size: 13px; }
   .rank { font-family: var(--mono); color: var(--dim); font-size: 12.5px; }
@@ -407,6 +441,7 @@
     <div class="controls">
       <select id="area" aria-label="Set your starting point"><option value="">Set your area…</option><optgroup label="Areas" id="areaGroup"></optgroup><optgroup label="Or start from a store" id="storeGroup"></optgroup></select>
       <button id="geo" aria-pressed="false">Use my location</button>
+      <button id="dealsGo">Deals near you</button>
       <button id="spreadOnly" aria-pressed="false">Only items that vary</button>
       <span class="geo-note" id="geoNote"></span>
     </div>
@@ -425,10 +460,11 @@
 
   <div id="detailView" class="detail hidden"></div>
   <div id="basketView" class="detail hidden"></div>
+  <div id="dealsView" class="detail hidden"></div>
 
   <footer>
     <div>Prices pulled from Taco Bell's public store menus on <span id="updated"></span>. <b>Unofficial and not affiliated with Taco Bell</b> — verify before you order.</div>
-    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b5</span></div>
+    <div>Refresh with <code>python3 scrape.py</code>, then <code>python3 build.py</code>. &middot; build <span id="build">b6</span></div>
   </footer>
 </div>
 
@@ -451,6 +487,10 @@ $("storeCount").textContent = DATA.storeCount;
 $("updated").textContent = DATA.updated;
 
 const money = (n) => "$" + n.toFixed(2);
+
+// Universal Maps link: opens the native app on a phone, the web map otherwise.
+const directionsTo = (s) =>
+  `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
 
 const BASKET_KEY = "vti.basket";
 const byName = new Map(items.map((i) => [i.name, i]));
@@ -561,7 +601,8 @@ function setHere(coords, note) {
   $("geoNote").textContent = note;
   areaSel.classList.toggle("set", !!coords && areaSel.value !== "");
   // Re-render whichever view is open so distances appear without a round trip.
-  if (!$("basketView").classList.contains("hidden")) showBasket();
+  if (!$("dealsView").classList.contains("hidden")) showDeals();
+  else if (!$("basketView").classList.contains("hidden")) showBasket();
   else if (openItem) showDetail(openItem);
 }
 
@@ -703,7 +744,7 @@ function showDetail(item) {
     return `<tr class="${cls}">
         <td class="rank">${idx + 1}</td>
         <td class="price">${money(r.price)}</td>
-        <td><span class="addr"></span><br><span class="city"></span></td>
+        <td><a class="addr" target="_blank" rel="noopener noreferrer"></a><br><span class="city"></span></td>
         ${dist}
       </tr>`;
   }).join("");
@@ -727,15 +768,14 @@ function showDetail(item) {
   view.querySelector("#detailName").textContent = item.name;
   // Fill addresses as text so item names/addresses can't inject markup.
   view.querySelectorAll("tbody tr").forEach((tr, i) => {
-    tr.querySelector(".addr").textContent = rows[i].s.address;
+    const a = tr.querySelector(".addr");
+    a.textContent = rows[i].s.address;
+    a.href = directionsTo(rows[i].s);
     tr.querySelector(".city").textContent = rows[i].s.city;
   });
 
   $("back").addEventListener("click", closeDetail);
-  $("basketView").classList.add("hidden");
-  $("listView").classList.add("hidden");
-  view.classList.remove("hidden");
-  window.scrollTo(0, 0);
+  openView(view);
 }
 
 function showBasket() {
@@ -806,7 +846,7 @@ function showBasket() {
     return `<tr class="${cls}">
         <td class="rank">${i + 1}</td>
         <td class="price">${money(r.total)}</td>
-        <td><span class="addr"></span><br><span class="city"></span></td>
+        <td><a class="addr" target="_blank" rel="noopener noreferrer"></a><br><span class="city"></span></td>
         ${dist}
       </tr>`;
   }).join("");
@@ -831,7 +871,9 @@ function showBasket() {
     el.querySelector(".nm").textContent = lines[i].item.name;
   });
   view.querySelectorAll("tbody tr").forEach((tr, i) => {
-    tr.querySelector(".addr").textContent = rows[i].s.address;
+    const a = tr.querySelector(".addr");
+    a.textContent = rows[i].s.address;
+    a.href = directionsTo(rows[i].s);
     tr.querySelector(".city").textContent = rows[i].s.city;
   });
 
@@ -846,6 +888,114 @@ function showBasket() {
 
   $("listView").classList.add("hidden");
   $("detailView").classList.add("hidden");
+  view.classList.remove("hidden");
+  window.scrollTo(0, 0);
+}
+
+function showDeals() {
+  const view = $("dealsView");
+
+  if (!here) {
+    view.innerHTML = `
+      <button class="back" type="button" id="dealsBack">&larr; All items</button>
+      <div><div class="eyebrow">Deals near you</div><h2>Set a starting point first</h2></div>
+      <div class="note">Pick your area or your usual store from the dropdown above, and this
+        will tell you what your location is cheap on and what it overcharges for.</div>`;
+    $("dealsBack").addEventListener("click", closeDeals);
+    openView(view);
+    return;
+  }
+
+  // Everything is measured against the store nearest the chosen starting point.
+  const mine = stores.map((s) => ({ s, d: miles(here, s) })).sort((a, b) => a.d - b.d)[0];
+  const id = mine.s.store;
+
+  const wins = [], loses = [];
+  for (const item of items) {
+    const p = item.stores[id];
+    if (p === undefined) continue;
+    const gap = +(p - item.min).toFixed(2);
+    if (gap <= 0) {
+      if (item.max > item.min) wins.push({ item, price: p, save: +(item.max - item.min).toFixed(2) });
+    } else {
+      // nearest store that actually sells it at the valley low
+      const best = Object.entries(item.stores)
+        .filter(([, v]) => v === item.min)
+        .map(([num]) => stores.find((x) => x.store === num))
+        .filter(Boolean)
+        .map((st) => ({ st, d: miles(here, st) }))
+        .sort((a, b) => a.d - b.d)[0];
+      if (best) loses.push({ item, price: p, gap, best });
+    }
+  }
+  loses.sort((a, b) => b.gap - a.gap || a.best.d - b.best.d);
+  wins.sort((a, b) => b.save - a.save);
+
+  // Where this store sits overall, on the items every location carries.
+  const shared = items.filter((i) => Object.keys(i.stores).length === stores.length);
+  const totals = stores.map((st) => ({
+    st, total: shared.reduce((sum, i) => sum + i.stores[st.store], 0),
+  })).sort((a, b) => a.total - b.total);
+  // Lots of locations tie exactly, so rank by how many are strictly cheaper —
+  // otherwise a store at the valley-low price can read as "#20" and "cheapest"
+  // in the same breath.
+  const ours = totals.find((t) => t.st.store === id).total;
+  const cheapest = totals[0].total;
+  const below = totals.filter((t) => t.total < ours - 0.005).length;
+  const tied = totals.filter((t) => Math.abs(t.total - ours) <= 0.005).length - 1;
+  const place = below + 1;
+
+  const dealRow = (cls, name, amt, where) => `
+    <div class="deal ${cls}">
+      <span class="nm"></span>
+      <span class="amt">${amt}${where ? `<span class="where">${where}</span>` : ""}</span>
+    </div>`;
+
+  const loseHtml = loses.slice(0, 8).map((l) =>
+    dealRow("lose", l.item.name, `+${money(l.gap)}`,
+            `${money(item_min(l.item))} at ${l.best.st.address} \u00b7 ${l.best.d.toFixed(1)} mi`)).join("");
+  const winHtml = wins.slice(0, 8).map((w) =>
+    dealRow("win", w.item.name, money(w.price), `up to ${money(w.save)} more elsewhere`)).join("");
+
+  view.innerHTML = `
+    <button class="back" type="button" id="dealsBack">&larr; All items</button>
+    <div>
+      <div class="eyebrow">${mine.s.address} \u00b7 ${mine.d.toFixed(1)} mi</div>
+      <h2>What's a deal here</h2>
+    </div>
+    <div class="rankline">${ours <= cheapest + 0.005
+        ? `This location is <b>as cheap as it gets</b> in the valley on the ${shared.length} items
+           everyone carries${tied ? `, tied with <b>${tied}</b> other${tied === 1 ? "" : "s"}` : ""}.`
+        : `This location ranks <b>#${place}</b> of <b>${stores.length}</b> in the valley on the
+           ${shared.length} items everyone carries \u2014 about <b>${money(ours - cheapest)}</b> more
+           than the cheapest${tied ? `, tied with <b>${tied}</b> other${tied === 1 ? "" : "s"}` : ""}.`}</div>
+    ${loses.length ? `<div class="deal-group">
+      <span class="deal-head lose">Costs more here \u00b7 ${loses.length} item${loses.length === 1 ? "" : "s"}</span>
+      ${loseHtml}</div>` : ""}
+    ${wins.length ? `<div class="deal-group">
+      <span class="deal-head win">Cheapest here \u00b7 buy these locally</span>
+      ${winHtml}</div>` : ""}
+    ${!loses.length && !wins.length
+      ? `<div class="note">Every item costs the same here as everywhere else.</div>` : ""}`;
+
+  const names = [...loses.slice(0, 8).map((l) => l.item.name), ...wins.slice(0, 8).map((w) => w.item.name)];
+  view.querySelectorAll(".deal .nm").forEach((el, i) => { el.textContent = names[i]; });
+  $("dealsBack").addEventListener("click", closeDeals);
+  openView(view);
+}
+
+const item_min = (i) => i.min;
+
+function closeDeals() {
+  $("dealsView").classList.add("hidden");
+  $("listView").classList.remove("hidden");
+}
+
+function openView(view) {
+  $("listView").classList.add("hidden");
+  $("detailView").classList.add("hidden");
+  $("basketView").classList.add("hidden");
+  $("dealsView").classList.add("hidden");
   view.classList.remove("hidden");
   window.scrollTo(0, 0);
 }
@@ -948,6 +1098,7 @@ $("geo").addEventListener("click", (e) => {
 });
 
 $("basketGo").addEventListener("click", showBasket);
+$("dealsGo").addEventListener("click", showDeals);
 
 renderBasketBar();
 renderList();
