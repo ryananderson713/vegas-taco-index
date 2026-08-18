@@ -96,7 +96,20 @@ Pages serves `index.html` from the repository root, over HTTPS. That matters:
 never can — that iframe is not granted the geolocation permission — which is why
 the app also offers a manual starting point.
 
-To publish updated prices:
+### Prices refresh themselves
+
+`.github/workflows/refresh-prices.yml` re-scrapes every Monday at 13:00 UTC,
+rebuilds both pages, and pushes only if prices actually moved. Pages redeploys
+on its own. Nothing to run by hand.
+
+Trigger one immediately from the Actions tab, or:
+
+```bash
+gh workflow run refresh-prices.yml
+gh run watch
+```
+
+To refresh locally instead:
 
 ```bash
 python3 scrape.py && python3 build.py

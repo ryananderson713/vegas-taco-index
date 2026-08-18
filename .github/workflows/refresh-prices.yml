@@ -1,0 +1,51 @@
+name: Refresh prices
+
+on:
+  schedule:
+    # Mondays 13:00 UTC (6am Pacific). Prices move slowly; weekly is plenty
+    # and keeps the request volume polite.
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}
+
+# Let the built-in token push the refreshed data back.
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-prices
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Scrape current prices
+        run: python3 scrape.py
+
+      - name: Rebuild pages
+        run: python3 build.py
+
+      - name: Commit if anything changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # data/vegas_prices.json always restamps `updated`, so diff the prices
+          # themselves — otherwise every run makes a no-op commit.
+          if git diff --quiet -- index.html vegas-taco-index.html; then
+            echo "No price changes; leaving the repo alone."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "Refresh prices ($(date -u +%Y-%m-%d))"
+          git push
+          echo "Pushed updated prices."
